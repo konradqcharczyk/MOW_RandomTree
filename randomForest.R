@@ -133,11 +133,11 @@ predictRF <- function(random_forest, data, isClassification, levelList) {
   data_to_return
 }
 
-checkRF <- function(data_with_pred, value_to_check) {
+checkRF <- function(data_with_pred, target) {
   count_correct = 0
   count_incorrect = 0
   for(i in 1:dim(data_with_pred)[1]) {
-    if( data_with_pred[i, 'Overall'] == data_with_pred[i,"predicted_class"])  {
+    if( data_with_pred[i, target] == data_with_pred[i,"predicted_class"])  {
       count_correct = count_correct + 1
     }
     else {
