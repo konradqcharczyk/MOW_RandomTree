@@ -161,7 +161,7 @@ k_cross_validation <- function(k, data, target, predictor_names, percent_predict
     }
     rf <- rpartRF(training_data, targ, preds, percent_predictors, num_trees, complex_param, min_split, min_bucket, max_depth)
     if(isClasification) {
-      levelList <- levels(attr(data, target))
+      levelList <- levels(data[[targ]])
     }
     data_with_pred = predictRF(rf, test_data, isClasification, levelList)
     results = checkRF(data_with_pred, target)
@@ -219,18 +219,9 @@ data_train <- all_data[s,]
 data_test <- all_data[-s,]
 
 targ <- "Overall"
-colnames(all_data)
-preds <- c("ID", "Name","Age","Nationality","Potential","Club","Value",                   
-           "Wage","Special","Preferred.Foot","International.Reputation","Weak.Foot","Skill.Moves","Work.Rate","Body.Type",               
-           "Real.Face"      , "Position"            ,"Jersey.Number","Joined"       ,           
-           "Loaned.From"    , "Contract.Valid.Until","Height"       ,"Weight"       ,           
-           "LS"             , "ST"                  ,"RS"           ,"LW"           ,           
-           "LF"             , "CF"                  ,"RF"           ,"RW"           ,           
-           "LAM"            , "CAM"                 ,"RAM"          ,"LM"           ,           
-           "LCM"            , "CM"                  ,"RCM"          ,"RM"           ,           
-           "LWB"            , "LDM"                 ,"CDM"          ,"RDM"          ,           
-           "RWB"            , "LB"                  ,"LCB"          ,"CB"           ,           
-           "RCB"            , "RB"                  ,"Crossing"     ,"Finishing"    ,           
+preds <- c("Age","Nationality","Potential","Club","Special","Preferred.Foot","International.Reputation","Weak.Foot","Skill.Moves","Work.Rate","Body.Type",               
+               "Position","Jersey.Number",           
+           "Loaned.From"    , "Contract.Valid.Until", "Crossing"     ,"Finishing"    ,           
            "HeadingAccuracy", "ShortPassing"        ,"Volleys"      ,"Dribbling"    ,           
            "Curve"          , "FKAccuracy"          ,"LongPassing"  ,"BallControl"  ,           
            "Acceleration"   , "SprintSpeed"         ,"Agility"      ,"Reactions"    ,           
@@ -238,19 +229,15 @@ preds <- c("ID", "Name","Age","Nationality","Potential","Club","Value",
            "Strength"       , "LongShots"           ,"Aggression"   ,"Interceptions",           
            "Positioning"    , "Vision"              ,"Penalties"    ,"Composure"    ,           
            "Marking"        , "StandingTackle"      ,"SlidingTackle","GKDiving"     ,           
-           "GKHandling"     , "GKKicking"           ,"GKPositioning","GKReflexes"   ,           
-           "Release.Clause" )
+           "GKHandling"     , "GKKicking"           ,"GKPositioning","GKReflexes" )
 
-ntrees <- 1
+ntrees <- 5
 
-targ <- "Overall"
+# rf <- rpartRF(data_train, targ, preds, 0.7, ntrees, 0, 10, 3, 30)
+# data_with_pred = predictRF(rf, data_test, FALSE)
+# checkRF(data_with_pred, targ)
 
-rf <- rpartRF(data_train, targ, preds, 0.7, ntrees, 0, 10, 3, 30)
-data_with_pred = predictRF(rf, data_test, FALSE)
-checkRF(data_with_pred, targ)
-
-
-# k_cross_validation(4, all_data, targ, preds, 0.7, 1, ntrees, 0.005, 20, 3, 30)
+k_cross_validation(4, all_data, targ, preds, 0.7,  ntrees, 0.005, 100, 3, 30, FALSE)
 
 
 
