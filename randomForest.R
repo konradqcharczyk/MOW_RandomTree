@@ -123,7 +123,6 @@ predictRF <- function(random_forest, data, isClassification, levelList) {
     prediction <- round_df(prediction, 0)
     all_predictions <- cbind(all_predictions, prediction)
   }
-  print(all_predictions)
   predicted_class <- apply(all_predictions, 1, function(x) names(which.max(table(x))))
   data_to_return <- cbind(data, predicted_class)
   if(isClassification) {
@@ -147,8 +146,8 @@ checkRF <- function(data_with_pred, target) {
   list(count_correct, count_incorrect)
 }
 
-k_cross_validation <- function(k, data, target, predictor_names, percent_predictors, percent_obs, num_trees,
-                               complex_param, min_split, min_bucket, max_depth) {
+k_cross_validation <- function(k, data, target, predictor_names, percent_predictors, num_trees,
+                               complex_param, min_split, min_bucket, max_depth, isClasification) {
   parts = split(data, sample(1:k, nrow(data), replace=T))
   count_correct = 0
   count_incorrect = 0
@@ -160,9 +159,12 @@ k_cross_validation <- function(k, data, target, predictor_names, percent_predict
         training_data = rbind(training_data, parts[[j]])
       }
     }
-    rf <- rpartRF(training_data, targ, preds, 0.7, 1, ntrees, 0.005, 20, 3, 30)
-    data_with_pred = predictRF(rf, test_data)
-    results = checkRF(data_with_pred)
+    rf <- rpartRF(training_data, targ, preds, percent_predictors, num_trees, complex_param, min_split, min_bucket, max_depth)
+    if(isClasification) {
+      levelList <- levels(attr(data, target))
+    }
+    data_with_pred = predictRF(rf, test_data, isClasification, levelList)
+    results = checkRF(data_with_pred, target)
     count_correct = count_correct + results[[1]]
     count_incorrect = count_incorrect + results[[2]]    
   }
@@ -202,6 +204,7 @@ rf <- rpartRF(data_train, targ, preds, 1, ntrees, 0, 10, 3, 10)
 levelList <- levels(all_data$MaritalStatus)
 data_with_pred = predictRF(rf, data_test, TRUE, levelList)
 checkRF(data_with_pred, targ)
+k_cross_validation(4, all_data, targ, preds, 0.7,  ntrees, 0, 10, 3, 30, TRUE)
 
 
 #FIFA
