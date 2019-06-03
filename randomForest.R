@@ -1,6 +1,7 @@
 # install.packages("e1071")
 # install.packages("rpart.plot")
-install.packages(ggplot2)
+# install.packages(ggplot2)
+# install.packages("roxygen2")
 
 library(rpart)
 library("rpart.plot")
@@ -8,102 +9,174 @@ library("ggplot2")
 library(dplyr)
 library(caret)
 
-rpartRF <- function(dataset, target, predictor_names, percent_predictors, percent_obs, num_trees,
-                    complex_param, min_split, min_bucket, max_depth, obs_weights) {
+anova_eval <- function(y, wt, parms) {
+  wmean <- sum(y*wt)/sum(wt)
+  rss <- sum(wt*(y-wmean)^2)
+  list(label= wmean, deviance=rss)
+}
 
-  # dataset = training_data
-  # target = targ
-  # target
-  # predictor_names = preds
-  # predictor_names
-  # percent_predictors = 0.7
-  # percent_obs = 0.9
-  # num_trees = 2
-  # complex_param = 0.005
-  # min_split = 10
-  # min_bucket = 3
-  # max_depth = 10
-  #
-  # dataset
 
-  # weights are optional so if they aren't there default to 1 for every row
-  if(missing(obs_weights)) {
-    obs_weights <- rep(1, nrow(dataset))
+anova_split <- function(y, wt, x, parms, continuous) {
+  # Center y
+  n <- length(y)
+  y <- y- sum(y*wt)/sum(wt)
+  
+  if (continuous) {
+    # continuous x variable
+    temp <- cumsum(y*wt)[-n]
+    
+    left.wt  <- cumsum(wt)[-n]
+    right.wt <- sum(wt) - left.wt
+    lmean <- temp/left.wt
+    rmean <- -temp/right.wt
+    goodness <- (left.wt*lmean^2 + right.wt*rmean^2)/sum(wt*y^2)
+    list(goodness= goodness, direction=sign(lmean))
   }
-  # stick the weights to the dataset
-  dataset <- cbind(dataset, obs_weights)
-  # an empty list for our trees
+  else {
+    # Categorical X variable
+    ux <- sort(unique(x))
+    wtsum <- tapply(wt, x, sum)
+    ysum  <- tapply(y*wt, x, sum)
+    means <- ysum/wtsum
+    
+    # For anova splits, we can order the categories by their means
+    #  then use the same code as for a non-categorical
+    ord <- order(means)
+    n <- length(ord)
+    temp <- cumsum(ysum[ord])[-n]
+    left.wt  <- cumsum(wtsum[ord])[-n]
+    right.wt <- sum(wt) - left.wt
+    lmean <- temp/left.wt
+    rmean <- -temp/right.wt
+    list(goodness= (left.wt*lmean^2 + right.wt*rmean^2)/sum(wt*y^2),
+         direction = ux[ord])
+  }
+}
+
+
+
+anova_init <- function(y, offset, parms, wt) {
+  if (!is.null(offset)) y <- y-offset
+  list(y=y, parms=0, numresp=1, numy=1,
+       summary= function(yval, dev, wt, ylevel, digits ) {
+         paste("  mean=", format(signif(yval, digits)),
+               ", MSE=" , format(signif(dev/wt, digits)),
+               sep='')
+       })
+}
+
+
+
+rpartRF <- function(dataset, target, predictor_names, percent_predictors,num_trees,
+                    complex_param, min_split, min_bucket, max_depth) {
+  # dataset : data to create tree
+  # target : attribute to predict
+  # predictor_names : attribute names used to predict target
+  # percent_predictors : percent of user predictors per tree
+  # num_trees : number of trees in forest
+  # complex_param : cp param in rpart
+  # min_split : minsplit param in rpart
+  # min_bucket : minbucket param in rpart
+  # max_depth: maxdepth param in rpart
+  
+  # init empty forest
   rforest <- list()
-  # build trees
+
+  #create trees
   for(i in 1:num_trees) {
-    # take a percent_predictors sample of the predictors
+    # choose columns to build a tree
     tree_predictors <- sample(predictor_names, length(predictor_names) * percent_predictors, replace = FALSE)
-    # tree_predictors
-    # take a sample of the observations (not stratified over class)
-    in_bag <- apply(dataset, MARGIN = 1, FUN = function(v) ifelse(runif(n = 1, min = 0, max = 1) <= percent_obs, 1, 0))
-    # in_bag
-    ds <- cbind(dataset, in_bag)
-    # ds
-    # which observations are in bag
-    in_bag <- which(ds$in_bag == 1)
-    # which observations are out of bag
-    out_bag <- which(ds$in_bag == 0)
-    # in_bag
-    ds[in_bag, target]
-    # set the rpart.control object
-    t_control <- rpart.control(minsplit = min_split, minbucket = min_bucket, cp = complex_param, maxdepth = max_depth)
+    # set controls to tree
+    t_control <- rpart.control(minsplit = min_split, minbucket = min_bucket,cp = complex_param, maxdepth = max_depth)
+    # set user written split methods
+    alist <- list(init= anova_init, split=anova_split, eval=anova_eval)
     # build a tree
-    tree <- rpart(formula = ds[in_bag,target] ~ ., data = ds[in_bag,tree_predictors], weights = ds[in_bag,"obs_weights"], control = t_control, model=TRUE)
-    # rpart.plot(tree)
-    # add our tree to the forest
+    tree <- rpart(formula = dataset[,target] ~ ., data = dataset[,tree_predictors], control = t_control, model=TRUE, method=alist)
+    # add tree to forest
     rforest[[i]] <- tree
   }
-  # return our list of trees
-  return(rforest)
+  # return forest
+  rforest
 }
 
 
 
-predictRF <- function(random_forest, data) {
-  all_predictions = {};
-  for(i in 1:length(rf)) {
-    prediction <- predict(rf[[i]], data, type="class")
+
+round_df <- function(x, digits) {
+  # round all numeric variables
+  # x: data frame 
+  # digits: number of digits to round
+  numeric_columns <- sapply(x, mode) == 'numeric'
+  x[numeric_columns] <-  round(x[numeric_columns], digits)
+  x
+}
+
+
+predictRF <- function(random_forest, data, isClassification, levelList) {
+  # random_forest : list of trees to predict target
+  # data : data to do prediction on
+  # isClassyfication  : if target is class or distinct 
+  # levelList : if classification list of target levels
+  all_predictions <- c()
+  for(i in 1:length(random_forest)) {
+    prediction <- predict(random_forest[[i]], data)
+    prediction <- round_df(prediction, 0)
     all_predictions <- cbind(all_predictions, prediction)
   }
-  predicted_class = apply(all_predictions,1,function(x) names(which.max(table(x))))
+  print(all_predictions)
+  predicted_class <- apply(all_predictions, 1, function(x) names(which.max(table(x))))
   data_to_return <- cbind(data, predicted_class)
-  return(data_to_return)
+  if(isClassification) {
+    data_to_return$predicted_class <- levelList[data_to_return$predicted_class]
+  }
+  
+  data_to_return
 }
 
-
-lelo <- function(data_with_pred) {
+checkRF <- function(data_with_pred, value_to_check) {
   count_correct = 0
   count_incorrect = 0
-  for(i in 1:length(data_with_pred)) {
-    if( data_with_pred["MaritalStatus"] == data_with_pred["predicted_class"])  
+  for(i in 1:dim(data_with_pred)[1]) {
+    if( data_with_pred[i, 'Overall'] == data_with_pred[i,"predicted_class"])  {
       count_correct = count_correct + 1
+    }
     else {
       count_incorrect = count_incorrect + 1
     }
   }
+  list(count_correct, count_incorrect)
 }
-lelo(data_with_pred)
+
+k_cross_validation <- function(k, data, target, predictor_names, percent_predictors, percent_obs, num_trees,
+                               complex_param, min_split, min_bucket, max_depth) {
+  parts = split(data, sample(1:k, nrow(data), replace=T))
+  count_correct = 0
+  count_incorrect = 0
+  for(i in 1:k) {
+    test_data = parts[[i]]
+    training_data = c();
+    for(j in 1:k) {
+      if(j != i) {
+        training_data = rbind(training_data, parts[[j]])
+      }
+    }
+    rf <- rpartRF(training_data, targ, preds, 0.7, 1, ntrees, 0.005, 20, 3, 30)
+    data_with_pred = predictRF(rf, test_data)
+    results = checkRF(data_with_pred)
+    count_correct = count_correct + results[[1]]
+    count_incorrect = count_incorrect + results[[2]]    
+  }
+  print(count_correct)
+  print(count_incorrect)
+  goodness = count_correct / (count_incorrect + count_correct)
+  print(goodness)
+}
 
 
 
 
-# data <- as.data.frame(diamonds)
-# # add the is.premium variable
-# data$is.premium <- sapply(data$cut, FUN = function(v) ifelse(v == "Premium", 1, 0))
-# targ <- "is.premium"
-# # set the predictors
-# preds <- c("carat", "depth", "table", "price", "x", "y", "z", "clarity", "color")
-# 
-# training_data <- data[1:52000,]
-# test_data <- data[52001:nrow(data),]
-# 
-# colnames(training_data)
 
+#IBM
 percent = 0.8
 data_file = "MartialStatus.csv"
 
@@ -115,44 +188,79 @@ data_train <- all_data[s,]
 data_test <- all_data[-s,]
 
 targ <- "MaritalStatus"
-# colnames(all_data)
-preds <- c("ď.żAge","Attrition" ,"BusinessTravel","DailyRate","Department" ,"DistanceFromHome",        
-           "Education","EducationField", "EmployeeCount", "EmployeeNumber", "EnvironmentSatisfaction",  "Gender"  ,                
-           "HourlyRate","JobInvolvement","JobLevel", "JobRole", "JobSatisfaction", "MonthlyIncome", "MonthlyRate"   ,           "NumCompaniesWorked" ,     
-           "Over18", "OverTime", "PercentSalaryHike", "PerformanceRating", "RelationshipSatisfaction", "StandardHours",           
-           "StockOptionLevel", "TotalWorkingYears", "TrainingTimesLastYear", "WorkLifeBalance", "YearsAtCompany" ,          "YearsInCurrentRole",      
+preds <- c("ď.żAge","Attrition" ,"BusinessTravel","DailyRate","Department" ,"DistanceFromHome",
+           "Education","EducationField", "EmployeeCount", "EmployeeNumber", "EnvironmentSatisfaction",  "Gender"  ,
+           "HourlyRate","JobInvolvement","JobLevel", "JobRole", "JobSatisfaction", "MonthlyIncome", "MonthlyRate"   ,           "NumCompaniesWorked" ,
+           "Over18", "OverTime", "PercentSalaryHike", "PerformanceRating", "RelationshipSatisfaction", "StandardHours",
+           "StockOptionLevel", "TotalWorkingYears", "TrainingTimesLastYear", "WorkLifeBalance", "YearsAtCompany" ,          "YearsInCurrentRole",
            "YearsSinceLastPromotion","YearsWithCurrManager")
-ntrees <- 5
-# some model data
-training_data <- data_train
-# some test data
-test_data <- data_test
-rf <- rpartRF(training_data, targ, preds, 0.7, 0.9, ntrees, 0.005, 10, 3, 10)
+# preds <- c("ď.żAge","Attrition" ,"BusinessTravel","DailyRate","Department")
 
-rf[[1]][15]
+ntrees <- 10
 
-
-prediction <- predict(rf[[1]], test_data, type="matrix")
-prediction
+rf <- rpartRF(data_train, targ, preds, 1, ntrees, 0, 10, 3, 10)
+levelList <- levels(all_data$MaritalStatus)
+data_with_pred = predictRF(rf, data_test, TRUE, levelList)
+checkRF(data_with_pred, targ)
 
 
-data_with_pred = predictRF(rf, test_data)
-data_with_pred
+#FIFA
+percent = 0.8
+data_file = "Fifa.csv"
 
-# checkRF(data_with_pred, test_data)
+all_data = read.csv(data_file, header = TRUE)
+count = dim(all_data)[1]
+s <-sample(count, floor(count * percent))
 
-# dim(dtree_preds)
-# test_data$YearsSinceLastPromotion 
-# dim(ifelse(dtree_preds >= 0.5, 1, 0))
-# dim(test_data$MaritalStatus)
-# dim(test_data$YearsSinceLastPromotion)
-# 
-# printcp(rf[[1]])
-# 
-# confusionMatrix(table(data = ifelse(dtree_preds[1] >= 0.5, 1, 0), reference = test_data$MaritalStatus))
-# 
-# rpart.plot(rf[[1]])
-# rpart.plot(rf[[2]])
+data_train <- all_data[s,]
+data_test <- all_data[-s,]
+
+targ <- "Overall"
+colnames(all_data)
+preds <- c("ID", "Name","Age","Nationality","Potential","Club","Value",                   
+           "Wage","Special","Preferred.Foot","International.Reputation","Weak.Foot","Skill.Moves","Work.Rate","Body.Type",               
+           "Real.Face"      , "Position"            ,"Jersey.Number","Joined"       ,           
+           "Loaned.From"    , "Contract.Valid.Until","Height"       ,"Weight"       ,           
+           "LS"             , "ST"                  ,"RS"           ,"LW"           ,           
+           "LF"             , "CF"                  ,"RF"           ,"RW"           ,           
+           "LAM"            , "CAM"                 ,"RAM"          ,"LM"           ,           
+           "LCM"            , "CM"                  ,"RCM"          ,"RM"           ,           
+           "LWB"            , "LDM"                 ,"CDM"          ,"RDM"          ,           
+           "RWB"            , "LB"                  ,"LCB"          ,"CB"           ,           
+           "RCB"            , "RB"                  ,"Crossing"     ,"Finishing"    ,           
+           "HeadingAccuracy", "ShortPassing"        ,"Volleys"      ,"Dribbling"    ,           
+           "Curve"          , "FKAccuracy"          ,"LongPassing"  ,"BallControl"  ,           
+           "Acceleration"   , "SprintSpeed"         ,"Agility"      ,"Reactions"    ,           
+           "Balance"        , "ShotPower"           ,"Jumping"      ,"Stamina"      ,           
+           "Strength"       , "LongShots"           ,"Aggression"   ,"Interceptions",           
+           "Positioning"    , "Vision"              ,"Penalties"    ,"Composure"    ,           
+           "Marking"        , "StandingTackle"      ,"SlidingTackle","GKDiving"     ,           
+           "GKHandling"     , "GKKicking"           ,"GKPositioning","GKReflexes"   ,           
+           "Release.Clause" )
+
+ntrees <- 1
+
+targ <- "Overall"
+
+rf <- rpartRF(data_train, targ, preds, 0.7, ntrees, 0, 10, 3, 30)
+data_with_pred = predictRF(rf, data_test, FALSE)
+checkRF(data_with_pred, targ)
+
+
+# k_cross_validation(4, all_data, targ, preds, 0.7, 1, ntrees, 0.005, 20, 3, 30)
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
